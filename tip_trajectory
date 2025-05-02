@@ -1,0 +1,156 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+from IPython.display import HTML
+
+# Parameters
+epsilon = 0.3        # Controls timescale separation between variables u and v
+beta = 0.7           # Reaction term coefficient
+gam = 0.5            # Damping coefficient in the system
+
+p = 3*((1 - gam) / gam)
+q = 3 * beta / gam
+
+def cardano(p, q):
+    # Calculate the discriminant to check if we need complex numbers
+    discriminant = (q**2 / 4) + (p**3 / 27)
+    if discriminant >= 0:
+        # Real case: standard formula works
+        return np.cbrt(-q/2 + np.sqrt(discriminant)) + np.cbrt(-q/2 - np.sqrt(discriminant))
+    else:
+        # Complex case: use complex numbers explicitly
+        # Convert to complex to force complex arithmetic
+        complex_q = complex(q)
+        complex_discriminant = complex(discriminant)
+
+        # Calculate cube roots with complex numbers
+        term1 = (-complex_q/2 + np.sqrt(complex_discriminant))**(1/3)
+        term2 = (-complex_q/2 - np.sqrt(complex_discriminant))**(1/3)
+
+        # The real solution is the real part of the sum
+        return float(np.real(term1 + term2))
+
+# Solve for u and v fixed points
+ustar = round(cardano(p, q), 10)
+vstar = round(ustar - (1/3) * ustar**3, 10)
+
+# Simulation parameters
+loops = 14000         # Number of timesteps for the simulation
+dt = 0.0025           # Timestep size for integration
+often = 50            # Interval for tracking tip location
+
+# Grid parameters
+points = 201
+L = 100     # Physical domain size (adjusted)
+dx = L / (points - 1)  # Grid spacing
+
+# Create spatial grid
+x = np.linspace(0, L, points)
+y = np.linspace(0, L, points)
+X, Y = np.meshgrid(x, y)
+
+# Scale factor for Gaussian perturbations (scales with grid size)
+sigma = L / 5
+
+# Initial conditions with correctly scaled perturbations
+u = ustar + 5 * np.exp(-((X - L/5)**2) / sigma**2)
+v = vstar + 5 * np.exp(-((Y - L/5)**2) / sigma**2)
+
+# Store spiral tip positions over time
+tippositions = []
+
+# Main simulation loop
+for i in range(loops):
+    # Calculate Laplacian using central difference method
+    laplacian = np.zeros_like(u)
+    laplacian[1:-1, 1:-1] = (u[2:, 1:-1] + u[:-2, 1:-1] + u[1:-1, 2:] + u[1:-1, :-2] - 4*u[1:-1, 1:-1]) / (dx**2)
+
+    # Time derivatives
+    ut = (u - u**3 / 3 - v) / epsilon + laplacian
+    vt = epsilon * (u + beta - gam * v)
+
+    # Update u and v
+    u += dt * ut
+    v += dt * vt
+
+    # Enforce boundary conditions (no-flux)
+    u[0, :] = u[1, :]
+    u[-1, :] = u[-2, :]
+    u[:, 0] = u[:, 1]
+    u[:, -1] = u[:, -2]
+
+    v[0, :] = v[1, :]
+    v[-1, :] = v[-2, :]
+    v[:, 0] = v[:, 1]
+    v[:, -1] = v[:, -2]
+
+    # Record tip position at specific intervals
+    if i % often == 0:
+        # Calculate spatial gradients of u and v
+        du_dx, du_dy = np.gradient(u, dx)
+        dv_dx, dv_dy = np.gradient(v, dx)
+
+        # Compute density for locating spiral tips
+        density = np.abs(du_dx * dv_dy - du_dy * dv_dx)**2
+
+        # Identify the point of maximum density
+        max_idx = np.unravel_index(np.argmax(density), density.shape)
+        max_x, max_y = max_idx
+
+        # Local refinement
+        window_size = 5
+        x_min = max(0, max_x - window_size)
+        x_max = min(density.shape[0], max_x + window_size + 1)
+        y_min = max(0, max_y - window_size)
+        y_max = min(density.shape[1], max_y + window_size + 1)
+
+        # Get local density and coordinates
+        local_density = density[x_min:x_max, y_min:y_max]
+        local_X = X[x_min:x_max, y_min:y_max]
+        local_Y = Y[x_min:x_max, y_min:y_max]
+
+        # Calculate centroid
+        density_sum = np.sum(local_density)
+        if density_sum > 0:
+            tipx = np.sum(local_X * local_density) / density_sum
+            tipy = np.sum(local_Y * local_density) / density_sum
+        else:
+            tipx, tipy = np.nan, np.nan
+
+        # Record tip position
+        tippositions.append((tipx, tipy))
+
+# Convert to numpy array
+tippositions = np.array(tippositions)
+
+# Set up figure for animation
+fig, ax = plt.subplots(figsize=(8, 8))
+
+# Set axis limits to focus on spiral region
+ax.set_xlim(45, 55)
+ax.set_ylim(50, 60)
+ax.set_xlabel('x', fontsize=18)
+ax.set_ylabel('y', fontsize=18)
+plt.xticks(fontsize=16)
+plt.yticks(fontsize=16)
+
+# Create line for tip trajectory
+traceline, = ax.plot([], [], 'k-', linewidth=2)
+
+# Animation function
+def animate_frame(i):
+    traceline.set_data(tippositions[:i+1, 0], tippositions[:i+1, 1])
+    return [traceline]
+
+# Create animation
+ani = animation.FuncAnimation(
+    fig,
+    animate_frame,
+    frames=len(tippositions),
+    interval=50,
+    blit=True,
+    repeat=True
+)
+
+plt.close(fig)
+HTML(ani.to_jshtml())
