@@ -1,0 +1,68 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
+# Fitz Hugh model parameters that we have been keeping consistent for each of comparison in the report
+epsilon = 0.3
+beta = 0.7
+gam = 0.5
+
+# Discretising the grid, including the number of points
+# Here things like grid resolution, evenly spaced grid points and num are controlled
+# Time step sizes and number of iterations for the simulation are also defined
+loops = 3000
+dt = 0.01
+points = 201
+L = 100
+x = np.linspace(-50, 50, points)
+y = np.linspace(0, 30, points)
+X, Y = np.meshgrid(x,y)
+dx = L / (points - 1)
+
+# Initialising the grid with baseline values
+a = 0.5
+b= 0.05
+
+ustar = -1.032789870
+vstar = -0.6655797400
+
+u = ustar + a * np.exp(-b * x**2)
+v = np.ones(points) * vstar
+
+
+# This is just a simple array that keeps track of the grid values for every single timestep
+# This makes it each to update based on the loop value that we are on as seen at the bottom of the loop
+twodarr = np.zeros((loops + 1, points))
+twodarr[0, :] = u.copy()
+
+
+# Same basic simulation loop
+for loop in range(1, loops + 1):
+    d2u_dx2 = np.zeros(points)
+    d2u_dx2[1:-1] = (u[2:] - 2*u[1:-1] + u[:-2]) / dx**2
+    ut = (u - u**3/3.0 - v) / epsilon
+    vt = epsilon * (u + beta - gam * v)
+    u[1:-1] = u[1:-1] + dt * (ut[1:-1] + d2u_dx2[1:-1])
+    v[1:-1] = v[1:-1] + dt * vt[1:-1]
+
+    # Boundary conditions
+    u[0], u[-1] = ustar, ustar
+    v[0], v[-1] = vstar, vstar
+
+    # Storing the values as mentioned previously
+    twodarr[loop, :] = u.copy()
+
+# Creating a grid to place our u values
+plt.figure(figsize=(16, 4))
+time = np.linspace(0, 30, loops + 1)
+X, T = np.meshgrid(x, time)
+
+# The colouring will be based on the range of values which provides the shading
+plt.pcolormesh(X, T, twodarr, shading='auto', cmap='coolwarm', vmin=-2, vmax=2)
+cbar = plt.colorbar(label='u')
+cbar.ax.tick_params(labelsize=16)
+cbar.set_label('u', size=20)
+plt.xlabel('x', fontsize=20)
+plt.ylabel('t', fontsize=20)
+plt.xticks(fontsize=16)
+plt.yticks(fontsize=16)
+plt.show()
