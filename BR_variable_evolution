@@ -1,0 +1,170 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.ticker import ScalarFormatter
+
+# Initial conditions
+Vm_0 = -84.622  # Starting value of membrane potential
+Ca_0 = 2e-7  # Initial intracellular calcium concentration
+m_0 = 0.01                # m-gate for sodium activation
+h_0 = 0.99                # h-gate for sodium inactivation
+j_0 = 0.98                # j-gate for sodium inactivation
+d_0 = 0.003               # d-gate for calcium activation
+f_0 = 0.99                # f-gate for calcium inactivation
+x1_0 = 0.0004             # x1-gate for potassium
+
+# Constants that define the cell's electrical properties
+membrane_capacitance = 1.0           # Membrane capacitance
+sodium_equilibrium_potential = 50.0  # Sodium equilibrium potential
+stimulus_amplitude = 25.0            # Amplitude of the stimulus
+stimulus_period = 1000.0             # Periodicity of the stimulus
+stimulus_length = 2.0                # Length of stimulus duration
+
+# Numerical solver parameters
+time_step = 0.1  # Time step for the simulation
+max_time = 400   # Total simulation time
+time_points = np.arange(0, max_time, time_step)  # List of time points
+
+# Function to calculate the rate of change (derivatives) of the system
+def calculate_derivatives(state_variables, time, conductance_parameters):
+    membrane_potential, calcium_concentration, m, h, j, d, f, x1 = state_variables
+
+    # Extract the conductance parameters (transform from log-scale to actual values)
+    gNaBar, gNaC, gCaBar, gK1Bar, gx1Bar = np.exp(conductance_parameters)
+
+    # Clip membrane potential to avoid extreme values
+    membrane_potential = np.clip(membrane_potential, -100, 100)
+
+    # Calculate sodium current
+    sodium_current = (gNaBar * m**3 * h * j + gNaC) * (membrane_potential - sodium_equilibrium_potential)
+
+    # Ensure gating variables are within the valid range [0, 1]
+    m, h, j = np.clip([m, h, j], 0.0, 1.0)
+
+    # Changes in gating variables (m, h, j)
+    dm_dt = calculate_gate_variable_change(membrane_potential, m, 'm')
+    dh_dt = calculate_gate_variable_change(membrane_potential, h, 'h')
+    dj_dt = calculate_gate_variable_change(membrane_potential, j, 'j')
+
+    # Calcium current and concentration change
+    calcium_equilibrium_potential = -82.3 - 13.0287 * np.log(calcium_concentration)
+    calcium_current = gCaBar * d * f * (membrane_potential - calcium_equilibrium_potential)
+    dCai_dt = -1e-7 * calcium_current + 0.07 * (1e-7 - calcium_concentration)
+
+    # Potassium and x1 current calculations
+    potassium_current = calculate_potassium_current(membrane_potential, gK1Bar)
+    x1_current = gx1Bar * x1 * (np.exp(0.04 * (membrane_potential + 77)) - 1) / np.exp(0.04 * (membrane_potential + 35))
+
+    # Change in x1-gate
+    dx1_dt = calculate_gate_variable_change(membrane_potential, x1, 'x1')
+
+    # Stimulus current (on/off depending on time)
+    stimulus_current = stimulus_amplitude if (time % stimulus_period) < stimulus_length else 0
+
+    # Change in membrane potential based on ionic currents and stimulus
+    dV_dt = -(1 / membrane_capacitance) * (potassium_current + x1_current + sodium_current + calcium_current - stimulus_current)
+
+    return np.array([dV_dt, dCai_dt, dm_dt, dh_dt, dj_dt, calculate_gate_variable_change(membrane_potential, d, 'd'),
+                     calculate_gate_variable_change(membrane_potential, f, 'f'), dx1_dt])
+
+# Function to calculate gate variable changes
+def calculate_gate_variable_change(mem_potential, gate_value, gate_name):
+    if gate_name == 'm':
+        alpha = (mem_potential + 47) / (1 - np.exp(-0.1 * (mem_potential + 47)))
+        beta = 40 * np.exp(-0.056 * (mem_potential + 72))
+    elif gate_name == 'h':
+        alpha = 0.126 * np.exp(-0.25 * (mem_potential + 77))
+        beta = 1.7 / (1 + np.exp(-0.082 * (mem_potential + 22.5)))
+    elif gate_name == 'j':
+        alpha = 0.055 * np.exp(-0.25 * (mem_potential + 78)) / (1 + np.exp(-0.2 * (mem_potential + 78)))
+        beta = 0.3 / (1 + np.exp(-0.1 * (mem_potential + 32)))
+    elif gate_name == 'd':
+        alpha = 0.095 * np.exp(-0.01 * (mem_potential + -5)) / (np.exp(-0.072 * (mem_potential + -5)) + 1)
+        beta = 0.07 * np.exp(-0.017 * (mem_potential + 44)) / (np.exp(0.05 * (mem_potential + 44)) + 1)
+    elif gate_name == 'f':
+        alpha = 0.012 * np.exp(-0.008 * (mem_potential + 28)) / (np.exp(0.15 * (mem_potential + 28)) + 1)
+        beta = 0.0065 * np.exp(-0.02 * (mem_potential + 30)) / (np.exp(-0.2 * (mem_potential + 30)) + 1)
+    elif gate_name == 'x1':
+        alpha = 0.0005 * np.exp(0.083 * (mem_potential + 50)) / (np.exp(0.057 * (mem_potential + 50)) + 1)
+        beta = 0.0013 * np.exp(-0.06 * (mem_potential + 20)) / (np.exp(-0.04 * (mem_potential + 33)) + 1)
+
+    return alpha * (1 - gate_value) - beta * gate_value
+
+# Function to calculate potassium current
+def calculate_potassium_current(mem_potential, gK1Bar):
+    return gK1Bar * (4 * (np.exp(0.04 * (mem_potential + 85)) - 1) /
+                     (np.exp(0.08 * (mem_potential + 53)) + np.exp(0.04 * (mem_potential + 53))) +
+                     0.2 * (mem_potential + 23) / (1 - np.exp(-0.04 * (mem_potential + 23))))
+
+# Function to simulate the system using Euler's method
+def run_simulation(conductance_parameters, time_points):
+    state_variables = [
+        Vm_0, Ca_0, m_0,
+        h_0, j_0, d_0, f_0, x1_0
+    ]
+
+    # Lists to store results
+    calcium_concentration_list = []
+    gating_variables = {
+        'd': [],
+        'f': [],
+        'x1': []
+    }
+
+    # Run simulation for each time point
+    for time in time_points:
+        calcium_concentration_list.append(state_variables[1])
+
+        # Calculate derivatives and update state
+        derivatives = calculate_derivatives(state_variables, time, conductance_parameters)
+        state_variables = state_variables + derivatives * time_step
+
+        # Store gating variables for plotting
+        for i, gate in enumerate(['d', 'f', 'x1']):
+            # Adjusted index to get d, f, x1
+            gating_variables[gate].append(state_variables[i + 5])
+
+        # Clip gating variables to keep them between 0 and 1
+        state_variables[2:8] = np.clip(state_variables[2:8], 0.0, 1.0)
+
+    return calcium_concentration_list, gating_variables
+
+# ---- Main Simulation ----
+conductance_parameters = np.log([4.0, 0.003, 0.09, 0.35, 0.8])
+
+calcium_concentration, gating_variables = run_simulation(conductance_parameters, time_points)
+
+# ---- Plotting ----
+plt.figure(figsize=(15, 6))
+
+# Plot calcium concentration
+plt.subplot(1, 2, 1)
+plt.plot(time_points, calcium_concentration, color="crimson")
+plt.xlabel('Time (ms)', fontsize = 20)
+plt.ylabel('Calcium Concentration', fontsize = 20)
+plt.title('Calcium Concentration', fontsize = 22)
+plt.grid(True)
+plt.xticks(fontsize = 16)
+plt.yticks(fontsize = 16)
+formatter = ScalarFormatter(useMathText=True)
+formatter.set_scientific(True)
+formatter.set_powerlimits((-1, 1))
+ax = plt.gca()
+ax.yaxis.set_major_formatter(formatter)
+# Increase the size of the scientific notation
+ax.yaxis.offsetText.set_fontsize(16)
+
+# Plot gating variables grouped
+# Plot calcium and potassium gating variables
+plt.subplot(1, 2, 2)
+for gate in ['d', 'f', 'x1']:
+    plt.plot(time_points, gating_variables[gate], label=gate)
+plt.xlabel('Time (ms)', fontsize=20)
+plt.ylabel('Gate Variable Value',fontsize=20)
+plt.title('Calcium and Potassium Gating Variables (d, f, x1)', fontsize=24)
+plt.legend(fontsize = 20)
+plt.grid(True)
+plt.xticks(fontsize = 16)
+plt.yticks(fontsize = 16)
+
+plt.tight_layout()
+plt.show()
