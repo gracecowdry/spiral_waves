@@ -1,0 +1,85 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
+# Model parameters
+epsilon = 0.3
+gam = 0.5
+
+# Solve for ustar
+def cardano(p, q):
+    discriminant = (q**2 / 4) + (p**3 / 27)
+    if discriminant >= 0:
+        return np.cbrt(-q/2 + np.sqrt(discriminant)) + np.cbrt(-q/2 - np.sqrt(discriminant))
+    else:
+        complex_q = complex(q)
+        complex_discriminant = complex(discriminant)
+        term1 = (-complex_q/2 + np.sqrt(complex_discriminant))**(1/3)
+        term2 = (-complex_q/2 - np.sqrt(complex_discriminant))**(1/3)
+        return float(np.real(term1 + term2))
+
+# Single-cell simulation
+def simulate_single_cell(u0, v0, epsilon, beta, gam, t_max=50, dt=0.01):
+    t = 0.0
+    u = u0
+    v = v0
+
+    while t < t_max:
+        ut = (u - u**3 / 3 - v) / epsilon
+        vt = epsilon * (u + beta - gam * v)
+
+        u += dt * ut
+        v += dt * vt
+
+        if u > u0 + 0.5:  # Excitation condition
+            return True
+        t += dt
+
+    return False
+
+# Find threshold using bisection
+def find_threshold_bisection(beta, epsilon, gam, tol=1e-4):
+    p = 3*((1 - gam) / gam)
+    q = 3 * beta / gam
+    ustar = cardano(p, q)
+    vstar = ustar - (1/3) * ustar**3
+
+    # Define search range
+    lower = 0.0
+    upper = 1.0  # Should be big enough to ensure excitation happens
+    found = False
+
+    # Check if excitation happens at upper bound
+    if not simulate_single_cell(ustar + upper, vstar, epsilon, beta, gam):
+        print(f"Warning: Upper bound too small for beta={beta:.3f}")
+
+    # Bisection loop
+    while (upper - lower) > tol:
+        mid = (lower + upper) / 2
+        if simulate_single_cell(ustar + mid, vstar, epsilon, beta, gam):
+            upper = mid
+            found = True
+        else:
+            lower = mid
+
+    if found:
+        return (lower + upper) / 2
+    else:
+        return None
+
+# Sweep over betas
+beta_values = np.linspace(0.5, 1.0, 50)
+thresholds = []
+
+for beta in beta_values:
+    threshold = find_threshold_bisection(beta, epsilon, gam)
+    thresholds.append(threshold if threshold is not None else np.nan)
+    print(f"Threshold for beta={beta:.3f} = {threshold}")
+
+# Plot beta vs threshold
+plt.figure(figsize=(8,6))
+plt.plot(beta_values, thresholds, 'o-', markersize=5)
+plt.xlabel('Beta', fontsize=18)
+plt.ylabel('Activation Threshold (Delta u)', fontsize=18)
+plt.title('Beta vs Activation Threshold (Bisection Method)', fontsize=20)
+plt.grid(True)
+plt.show()
