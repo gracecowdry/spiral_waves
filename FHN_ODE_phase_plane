@@ -1,0 +1,67 @@
+# FHN ODE nullcline analysis
+import numpy as np
+import matplotlib.pyplot as plt
+
+# FHN Model Parameters for our simulation
+epsilon = 0.3
+beta = 0.7
+gam = 0.5
+ustar = -1.032789870
+vstar = -0.6655797400
+
+# Parameters controlling the simulation, e.g the number of timesteps of the simulation we are performing, etc....
+loops = 2500
+dt = 0.01
+t = 0.0
+
+# The initial simulation conditions that are thought of as a "baseline"
+u=ustar + 0.29
+v=vstar
+
+# Setting the singular dimensional values to these baseline parameters, this is the t_0
+# or the starting point of our simulation that will be shown in the animations we make
+ulist=[u]
+vlist=[v]
+tlist=[t]
+
+# Running our simulation loop by updating according to the equations and tracking the update variables at every step
+for loop in range(0, loops):
+    # Updating according to the respective differential equations of u and v
+    ut = (u-u**3/3.0-v) / epsilon
+    vt = epsilon * (u+beta-gam*v)
+
+    # Updating the constants to their values at that given point
+    t = t + dt
+    u = u + ut * dt
+    v = v + vt * dt
+
+    # Keeping track of the values
+    tlist.append(t)
+    ulist.append(u)
+    vlist.append(v)
+
+# nullclines
+uu=np.arange(-2.5,2.0,0.01)
+v1=uu-uu**3/3.0
+v2=(uu+beta)/gam
+
+# Potting the figure
+fig = plt.figure(figsize=(8,10))
+ax = fig.add_subplot(211)
+
+ax.set_xlabel("u", fontsize=20)
+ax.set_ylabel("v", fontsize=20)
+plt.xticks(fontsize=16)
+plt.yticks(fontsize=16)
+
+# Plot nullclines and trajectory with labels
+ax.plot(uu, v1, color="tomato", label="u-nullcline")
+ax.plot(uu, v2, color="blue", label="v-nullcline")
+ax.plot(ulist, vlist, color="black")
+
+
+# Extra stuff to make the graph seem nicer
+ax.set_xlim([-2.5, 2.0])
+ax.set_ylim([-1.5, 2.0])
+ax.legend(fontsize=16)
+plt.show()
