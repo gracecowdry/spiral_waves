@@ -3,6 +3,8 @@ import matplotlib.pyplot as plt
 import matplotlib.animation
 from IPython.display import HTML
 
+# === Global Parameters ===
+
 # ODE Parameters
 EPSILON = 0.3
 BETA = 0.7
@@ -25,21 +27,36 @@ X, Y = np.meshgrid(GRID_X, GRID_Y)
 transient_delay = 4000
 shock_time = 6500
 
+# === Impulse / Stimulus Functions ===
+
 def stimulus_circle(u, x_center, y_center, radius, amplitude):
+    """
+    Apply a circular stimulus to the u field.
+    """
     mask = (X - x_center) ** 2 + (Y - y_center) ** 2 <= radius ** 2
     u[mask] += amplitude
 
 
 def stimulus_rectangle(u, x_start, x_end, y_start, y_end, amplitude):
+    """
+    Apply a rectangular stimulus to the u field.
+    """
     u[x_start:x_end, y_start:y_end] += amplitude
 
 def apply_stimulus(u, shape_function, **kwargs):
+    """
+    Apply a stimulus to the u field using a given shape function.
+    """
     shape_function(u, **kwargs)
 
+# === Other Functions ===
+
 def initialise_fields(initial_impulse=False):
-    # Gaussian initial condition vs the baseline initial conditions without impulses / spirals
+    """
+    Initialise u and v fields with/without initial impulse.
+    """
     if initial_impulse:
-        u = USTAR + 5 * np.exp((-(X - 10) ** 2) / 100)
+        u = USTAR + 5 * np.exp((-(X - 10) ** 2) / 100)  # Gaussian initial condition
         v = VSTAR + 5 * np.exp((-(Y - 10) ** 2) / 100)
     else:
         u = USTAR * np.ones_like(X)
@@ -47,11 +64,17 @@ def initialise_fields(initial_impulse=False):
     return u, v
 
 def compute_laplacian(field):
+    """
+    Compute the Laplacian of a field using finite differences.
+    """
     laplacian_x = (field[2:, 1:-1] - 2 * field[1:-1, 1:-1] + field[:-2, 1:-1]) / DX ** 2
     laplacian_y = (field[1:-1, 2:] - 2 * field[1:-1, 1:-1] + field[1:-1, :-2]) / DX ** 2
     return laplacian_x + laplacian_y
 
 def update_fields(u, v):
+    """
+    Update the u and v fields based on the reaction-diffusion equations.
+    """
     laplacian_u = compute_laplacian(u)
     ut = (u[1:-1, 1:-1] - (u[1:-1, 1:-1] ** 3) / 3 - v[1:-1, 1:-1]) / EPSILON
     vt = EPSILON * (u[1:-1, 1:-1] + BETA - GAMMA * v[1:-1, 1:-1])
@@ -61,10 +84,16 @@ def update_fields(u, v):
     return u, v
 
 def apply_boundary_conditions(u, v):
+    """
+    Apply fixed boundary conditions to the u and v fields.
+    """
     u[0, :], u[-1, :], u[:, 0], u[:, -1] = USTAR, USTAR, USTAR, USTAR
     v[0, :], v[-1, :], v[:, 0], v[:, -1] = VSTAR, VSTAR, VSTAR, VSTAR
 
 def tip_finder(u, v):
+    """
+    Find the location of the spiral wave tip based on density.
+    """
     du_dx, du_dy = np.gradient(u, DX, edge_order=2)
     dv_dx, dv_dy = np.gradient(v, DX, edge_order=2)
     density = np.abs(du_dx * dv_dy - du_dy * dv_dx) ** 2
@@ -72,6 +101,9 @@ def tip_finder(u, v):
     return GRID_X[max_idx[1]], GRID_Y[max_idx[0]]
 
 def run_simulation(initial_impulse, stimulus_schedule, shock_time):
+    """
+    Run the reaction-diffusion simulation with both scheduled stimuli and tip-tracking shocks.
+    """
     u, v = initialise_fields(initial_impulse)
     snapshots = []
 
@@ -82,7 +114,7 @@ def run_simulation(initial_impulse, stimulus_schedule, shock_time):
 
         if i == shock_time:
             tip_x, tip_y = tip_finder(u, v)
-            stimulus_circle(u, tip_x, tip_y, radius=25, amplitude=1)
+            stimulus_circle(u, tip_x, tip_y, radius=22, amplitude=1)
 
         u, v = update_fields(u, v)
 
@@ -92,6 +124,9 @@ def run_simulation(initial_impulse, stimulus_schedule, shock_time):
     return snapshots
 
 def create_animation(snapshots):
+    """
+    Create an animation of the wave evolution.
+    """
     fig, ax = plt.subplots(figsize=(8, 8))
     cax = ax.imshow(
         snapshots[0],
@@ -120,6 +155,7 @@ def create_animation(snapshots):
     plt.close(fig)
     return animation
 
+# === Main Execution ===
 if __name__ == "__main__":
     stimulus_schedule = [{
     "interval": [8500, 10500, 12500, 14500, 16500],
@@ -129,9 +165,9 @@ if __name__ == "__main__":
 
     snapshots = run_simulation(True, stimulus_schedule, shock_time)
 
-  #  Writer = matplotlib.animation.writers['ffmpeg']
-   # writer = Writer(fps=10, bitrate=1800)
-   # animation.save("tip_motion_defibrillation.mp4", writer=writer)
-
     animation = create_animation(snapshots)
     display(HTML(animation.to_jshtml()))
+
+    Writer = matplotlib.animation.writers['ffmpeg']
+    writer = Writer(fps=10, metadata=dict(artist='Your Name'), bitrate=1800)
+    animation.save("tip_motion_defibrillation.mp4", writer=writer)
