@@ -1,0 +1,150 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
+# Initial parameters for the model
+# These are the starting values for the membrane potential and various gating variables
+# that control the ion channels (Na, Ca, K) during the action potential
+initial_membrane_potential = -84.622  # Initial membrane potential
+initial_calcium_concentration = 2e-7  # Initial calcium concentration
+m_0 = 0.01                # Initial value of 'm' gate variable (for sodium activation)
+initial_h_gate = 0.99                # Initial value of 'h' gate variable (for sodium inactivation)
+initial_j_gate = 0.98                # Initial value of 'j' gate variable (for sodium inactivation)
+initial_d_gate = 0.003               # Initial value of 'd' gate variable (for calcium activation)
+initial_f_gate = 0.99                # Initial value of 'f' gate variable (for calcium inactivation)
+initial_x1_gate = 0.0004             # Initial value of 'x1' gate variable (for potassium)
+
+# Constants that define the cell's electrical properties
+membrane_capacitance = 1.0           # Membrane capacitance
+sodium_equilibrium_potential = 50.0  # Sodium equilibrium potential
+stimulus_amplitude = 25.0            # Stimulus amplitude
+stimulus_period = 1000.0             # Stimulus period
+stimulus_length = 2.0               # Stimulus duration
+
+# Numerical solver parameters
+time_step = 0.1  # Time step for the simulation
+max_time = 400   # Total simulation time
+time_points = np.arange(0, max_time, time_step)  # List of time points for the simulation
+
+# Function to calculate the rate of change (derivatives) of the system
+def calculate_derivatives(state_variables, time, conductance_parameters):
+    # calculates how each variable in the system changes over time
+    # Unpack state variables (current values of the system)
+    membrane_potential, calcium_concentration, m, h, j, d, f, x1 = state_variables
+
+    # Extract the conductance parameters (transform from log-scale to actual values)
+    gNaBar, gNaC, gCaBar, gK1Bar, gx1Bar = np.exp(conductance_parameters)
+
+    # Clip the membrane potential to avoid extreme values that could lead to numerical instability
+    membrane_potential = np.clip(membrane_potential, -100, 100)
+
+    # Calculate sodium current (INa) based on gating variables m, h, j
+    sodium_current = (gNaBar * m**3 * h * j + gNaC) * (membrane_potential - sodium_equilibrium_potential)
+
+    # Ensure gating variables are within the valid range [0, 1] to avoid issues with numerical errors
+    m, h, j = np.clip([m, h, j], 0.0, 1.0)
+
+    # Calculate the changes in gating variables (m, h, j) using alpha and beta functions.
+    # These functions describe the activation and inactivation kinetics of each gate.
+    dm_dt = calculate_gate_variable_change(membrane_potential, m, 'm')
+    dh_dt = calculate_gate_variable_change(membrane_potential, h, 'h')
+    dj_dt = calculate_gate_variable_change(membrane_potential, j, 'j')
+
+    # Calcium current and change in calcium concentration
+    calcium_equilibrium_potential = -82.3 - 13.0287 * np.log(calcium_concentration)
+    calcium_current = gCaBar * d * f * (membrane_potential - calcium_equilibrium_potential)
+    dCai_dt = -1e-7 * calcium_current + 0.07 * (1e-7 - calcium_concentration)
+
+    # Potassium and x1 current calculations based on the membrane potential and gating variables
+    potassium_current = calculate_potassium_current(membrane_potential, gK1Bar)
+    x1_current = gx1Bar * x1 * (np.exp(0.04 * (membrane_potential + 77)) - 1) / np.exp(0.04 * (membrane_potential + 35))
+
+    # Gate variable change for x1
+    dx1_dt = calculate_gate_variable_change(membrane_potential, x1, 'x1')
+
+    # Stimulus current is added to the model depending on the time point
+    stimulus_current = stimulus_amplitude if (time % stimulus_period) < stimulus_length else 0
+
+    # Change in membrane potential based on the ionic currents and stimulus current
+    dV_dt = -(1 / membrane_capacitance) * (potassium_current + x1_current + sodium_current + calcium_current - stimulus_current)
+
+    return np.array([dV_dt, dCai_dt, dm_dt, dh_dt, dj_dt, calculate_gate_variable_change(membrane_potential, d, 'd'),
+                     calculate_gate_variable_change(membrane_potential, f, 'f'), dx1_dt])
+
+# Function to calculate gate variable changes
+def calculate_gate_variable_change(mem_potential, gate_value, gate_name):
+    #calculates how a specific gate variable ('m', 'h', 'j', 'd', 'f', 'x1') changes over time.
+    if gate_name == 'm':
+        alpha = (mem_potential + 47) / (1 - np.exp(-0.1 * (mem_potential + 47)))
+        beta = 40 * np.exp(-0.056 * (mem_potential + 72))
+    elif gate_name == 'h':
+        alpha = 0.126 * np.exp(-0.25 * (mem_potential + 77))
+        beta = 1.7 / (1 + np.exp(-0.082 * (mem_potential + 22.5)))
+    elif gate_name == 'j':
+        alpha = 0.055 * np.exp(-0.25 * (mem_potential + 78)) / (1 + np.exp(-0.2 * (mem_potential + 78)))
+        beta = 0.3 / (1 + np.exp(-0.1 * (mem_potential + 32)))
+    elif gate_name == 'd':
+        alpha = 0.095 * np.exp(-0.01 * (mem_potential + -5)) / (np.exp(-0.072 * (mem_potential + -5)) + 1)
+        beta = 0.07 * np.exp(-0.017 * (mem_potential + 44)) / (np.exp(0.05 * (mem_potential + 44)) + 1)
+    elif gate_name == 'f':
+        alpha = 0.012 * np.exp(-0.008 * (mem_potential + 28)) / (np.exp(0.15 * (mem_potential + 28)) + 1)
+        beta = 0.0065 * np.exp(-0.02 * (mem_potential + 30)) / (np.exp(-0.2 * (mem_potential + 30)) + 1)
+    elif gate_name == 'x1':
+        alpha = 0.0005 * np.exp(0.083 * (mem_potential + 50)) / (np.exp(0.057 * (mem_potential + 50)) + 1)
+        beta = 0.0013 * np.exp(-0.06 * (mem_potential + 20)) / (np.exp(-0.04 * (mem_potential + 33)) + 1)
+
+    return alpha * (1 - gate_value) - beta * gate_value
+
+# Function to calculate potassium current
+def calculate_potassium_current(mem_potential, gK1Bar):
+    return gK1Bar * (4 * (np.exp(0.04 * (mem_potential + 85)) - 1) /
+                     (np.exp(0.08 * (mem_potential + 53)) + np.exp(0.04 * (mem_potential + 53))) +
+                     0.2 * (mem_potential + 23) / (1 - np.exp(-0.04 * (mem_potential + 23))))
+
+# Function to simulate the system using Euler's method
+def run_simulation(conductance_parameters, time_points):
+    # This function runs the simulation and tracks the membrane potential over time using Euler's method
+    # We calculate the derivative of each variable, update the state variables, and store results
+    # Initialise state variables with initial conditions
+    state_variables = [
+        initial_membrane_potential, initial_calcium_concentration, m_0,
+        initial_h_gate, initial_j_gate, initial_d_gate, initial_f_gate, initial_x1_gate
+    ]
+
+    # Lists to store results over time
+    membrane_potential_list = []
+    calcium_concentration_list = []
+
+    # Loop through each time step
+    for time in time_points:
+        membrane_potential_list.append(state_variables[0])
+        calcium_concentration_list.append(state_variables[1])
+
+        # Get the derivatives for the current state
+        derivatives = calculate_derivatives(state_variables, time, conductance_parameters)
+
+        # Update the state variables using Euler's method (simple numerical integration)
+        state_variables = state_variables + derivatives * time_step
+
+        # Clip the gating variables to ensure they stay between 0 and 1 (physical limits)
+        state_variables[2:8] = np.clip(state_variables[2:8], 0.0, 1.0)
+
+    # Return the results (membrane potential over time)
+    return np.array(membrane_potential_list)
+
+# Conductance parameters are log-transformed to ensure they are within a reasonable range
+conductance_parameters = np.log([4.0, 0.003, 0.09, 0.35, 0.8])  # Log-transformed conductance values
+
+# Run the simulation
+membrane_potential = run_simulation(conductance_parameters, time_points)
+
+# Visualising the simulation results by plotting the membrane potential over time
+plt.figure(figsize=(10, 6))
+plt.plot(time_points, membrane_potential, color="blue")
+plt.xlabel('Time (ms)', fontsize=20)
+plt.ylabel('Membrane Potential (mV)', fontsize=20)
+#plt.title('Beeler-Reuter Action Potential', fontsize=18)
+plt.xticks(fontsize=16)
+plt.yticks(fontsize=16)
+plt.grid(True)  # Add a grid to the plot for better readability
+plt.tight_layout()  # Adjust the layout to fit everything nicely
+plt.show()  # Display the plot
