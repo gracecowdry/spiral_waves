@@ -1,0 +1,150 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.animation
+from IPython.display import HTML
+
+# ODE Parameters
+EPSILON = 0.3
+BETA = 0.7
+GAMMA = 0.5
+USTAR = -1.032789870
+VSTAR = -0.6655797400
+
+# Simulation Parameters
+LOOPS = 17000
+DT = 0.01
+OFTEN = 100
+POINTS = 201
+DX = 0.25
+
+# Grid Parameters
+GRID_X = np.linspace(0, 50, POINTS)
+GRID_Y = np.linspace(0, 50, POINTS)
+X, Y = np.meshgrid(GRID_X, GRID_Y)
+
+transient_delay = 4000
+shock_time = 6500
+
+
+def stimulus_circle(u, x_center, y_center, radius, amplitude):
+    mask = (X - x_center) ** 2 + (Y - y_center) ** 2 <= radius ** 2
+    u[mask] += amplitude
+
+
+def stimulus_rectangle(u, x_start, x_end, y_start, y_end, amplitude):
+    u[x_start:x_end, y_start:y_end] += amplitude
+
+def apply_stimulus(u, shape_function, **kwargs):
+    shape_function(u, **kwargs)
+
+def initialise_fields(initial_impulse=False):
+    # We can either initialise the grid with a gaussian or we can set the whole grid to a baseline depeding on how we want it ot start
+    if initial_impulse:
+        u = USTAR + 10 * np.exp((-(X - 10) ** 2) / 100)
+        v = VSTAR + 10 * np.exp((-(Y - 10) ** 2) / 100)
+    else:
+        u = USTAR * np.ones_like(X)
+        v = VSTAR * np.ones_like(X)
+    return u, v
+
+def compute_laplacian(field):
+    # Compute the laplacian using finite differences.
+    laplacian_x = (field[2:, 1:-1] - 2 * field[1:-1, 1:-1] + field[:-2, 1:-1]) / DX ** 2
+    laplacian_y = (field[1:-1, 2:] - 2 * field[1:-1, 1:-1] + field[1:-1, :-2]) / DX ** 2
+    return laplacian_x + laplacian_y
+
+def update_fields(u, v):
+    laplacian_u = compute_laplacian(u)
+    ut = (u[1:-1, 1:-1] - (u[1:-1, 1:-1] ** 3) / 3 - v[1:-1, 1:-1]) / EPSILON
+    vt = EPSILON * (u[1:-1, 1:-1] + BETA - GAMMA * v[1:-1, 1:-1])
+    u[1:-1, 1:-1] += DT * (ut + laplacian_u)
+    v[1:-1, 1:-1] += DT * vt
+    apply_boundary_conditions(u, v)
+    return u, v
+
+def apply_boundary_conditions(u, v):
+    u[0, :], u[-1, :], u[:, 0], u[:, -1] = USTAR, USTAR, USTAR, USTAR
+    v[0, :], v[-1, :], v[:, 0], v[:, -1] = VSTAR, VSTAR, VSTAR, VSTAR
+
+def tip_finder(u, v):
+    du_dx, du_dy = np.gradient(u, DX, edge_order=2)
+    dv_dx, dv_dy = np.gradient(v, DX, edge_order=2)
+    density = np.abs(du_dx * dv_dy - du_dy * dv_dx) ** 2
+    max_idx = np.unravel_index(np.argmax(density), density.shape)
+    return GRID_X[max_idx[1]], GRID_Y[max_idx[0]]
+
+def run_simulation(initial_impulse, stimulus_schedule, shock_time):
+    u, v = initialise_fields(initial_impulse)
+    snapshots = []
+
+    for i in range(1, LOOPS + 1):
+        for stimulus in stimulus_schedule:
+            if i in stimulus["interval"]:
+                apply_stimulus(u, stimulus["shape_function"], **stimulus["params"])
+
+        if i == shock_time:
+            tip_x, tip_y = tip_finder(u, v)
+            stimulus_circle(u, tip_x, tip_y, radius=50, amplitude=1)
+
+        u, v = update_fields(u, v)
+
+        if i % OFTEN == 0 and i > transient_delay:
+            snapshots.append(u.copy())
+
+    return snapshots
+
+def create_animation(snapshots):
+    fig, ax = plt.subplots(figsize=(8, 8))
+    cax = ax.imshow(
+        snapshots[0],
+        extent=[GRID_X.min(), GRID_X.max(), GRID_Y.min(), GRID_Y.max()],
+        vmin=-2,
+        vmax=2,
+        cmap='coolwarm',
+        animated=True
+    )
+    cbar = fig.colorbar(cax, label='u')
+    cbar.ax.set_ylabel('u', fontsize=34)
+    cbar.ax.tick_params(labelsize=28)
+    #title = ax.set_title('Spiral Wave Evolution at t=0.00')
+    ax.set_xlabel('x', fontsize = 34)
+    ax.set_ylabel('y', fontsize = 34)
+    plt.xticks(fontsize=28)
+    plt.yticks(fontsize=28)
+
+    def animate_frame(i):
+        cax.set_array(snapshots[i])
+        return [cax]
+
+    animation = matplotlib.animation.FuncAnimation(
+        fig, animate_frame, frames=len(snapshots), interval=100, blit=True, repeat=True
+    )
+    plt.close(fig)
+    return animation
+
+if __name__ == "__main__":
+    # Calculate stimuli intervals based on 857 milliseconds
+    # 1 dimensionless unit = 45 milliseconds
+    # Each loop represents 0.01 × 45 = 0.45 milliseconds
+    # 857 milliseconds ÷ 0.45 milliseconds per loop ≈ 1904 loops
+    stimulus_interval = 1904
+
+    # Generate stimulus times starting from the beginning (loop 1)
+    # and repeating every 1904 loops until the end of simulation
+    stimulus_times = list(range(1, LOOPS + 1, stimulus_interval))
+
+    stimulus_schedule = [{
+        "interval": stimulus_times,
+        "shape_function": stimulus_rectangle,
+        "params": {"x_start": 5, "x_end": 50, "y_start": 5, "y_end": 10, "amplitude": 1.5}
+    }]
+
+    snapshots = run_simulation(True, stimulus_schedule, shock_time)
+    print(len(snapshots))
+    animation = create_animation(snapshots)
+
+    Writer = matplotlib.animation.writers['ffmpeg']
+    writer = Writer(fps=10, bitrate=1800)
+    animation.save("defibrillation_total.mp4", writer=writer)
+
+    display(HTML(animation.to_jshtml()))
