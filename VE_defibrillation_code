@@ -1,0 +1,237 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.animation
+from IPython.display import HTML
+
+# ODE Parameters
+EPSILON = 0.3
+BETA = 0.7
+GAMMA = 0.5
+USTAR = -1.032789870
+VSTAR = -0.6655797400
+# New constant for scarred VSTAR
+SCARRED_VSTAR = VSTAR + 20
+
+# Simulation Parameters
+LOOPS = 17000
+DT = 0.01
+OFTEN = 100
+POINTS = 201
+L = 50
+DX = L / (POINTS -1)
+
+# Grid Parameters
+GRID_X = np.linspace(0, L, POINTS)
+GRID_Y = np.linspace(0, L, POINTS)
+X, Y = np.meshgrid(GRID_X, GRID_Y)
+
+
+transient_delay = 4000
+
+def scar_rectangle(u, v, x_start, x_end, y_start, y_end):
+    u[x_start:x_end, y_start:y_end] = USTAR
+    v[x_start:x_end, y_start:y_end] = SCARRED_VSTAR
+
+
+def scar_circle(u, v, x_center, y_center, radius):
+    mask = (X - x_center) ** 2 + (Y - y_center) ** 2 <= radius ** 2
+    u[mask] = USTAR
+    v[mask] = SCARRED_VSTAR
+
+def stimulus_rectangle(u, x_start, x_end, y_start, y_end, amplitude):
+    u[x_start:x_end, y_start:y_end] += amplitude
+
+
+def stimulus_circle(u, x_center, y_center, radius, amplitude):
+    mask = (X - x_center) ** 2 + (Y - y_center) ** 2 <= radius ** 2
+    u[mask] += amplitude
+
+
+def apply_stimulus(u, shape_function, **kwargs):
+    shape_function(u, **kwargs)
+
+def initialise_fields(initial_impulse=False):
+    if initial_impulse:
+      u = USTAR + 10*np.exp((-(X-10) ** 2)/100)
+      v = VSTAR + 10*np.exp((-(Y-10)**2)/100)
+    else:
+        u = USTAR * np.ones_like(X)
+        v = VSTAR * np.ones_like(X)
+    return u, v
+
+def compute_laplacian(field):
+    laplacian_x = (field[2:, 1:-1] - 2 * field[1:-1, 1:-1] + field[:-2, 1:-1]) / DX ** 2
+    laplacian_y = (field[1:-1, 2:] - 2 * field[1:-1, 1:-1] + field[1:-1, :-2]) / DX ** 2
+    return laplacian_x + laplacian_y
+
+
+def update_fields(u, v):
+    # Compute Laplacian of u
+    laplacian_u = compute_laplacian(u)
+
+    # Compute time derivatives
+    ut = (u[1:-1, 1:-1] - (u[1:-1, 1:-1] ** 3) / 3 - v[1:-1, 1:-1]) / EPSILON
+    vt = EPSILON * (u[1:-1, 1:-1] + BETA - GAMMA * v[1:-1, 1:-1])
+
+    # Update u and v
+    u[1:-1, 1:-1] += DT * (ut + laplacian_u)
+    v[1:-1, 1:-1] += DT * vt
+
+    # Apply boundary conditions
+    apply_boundary_conditions(u, v)
+    return u, v
+
+
+def apply_boundary_conditions(u, v):
+    u[0, :], u[-1, :], u[:, 0], u[:, -1] = USTAR, USTAR, USTAR, USTAR
+    v[0, :], v[-1, :], v[:, 0], v[:, -1] = VSTAR, VSTAR, VSTAR, VSTAR
+
+def virtual_electrode(u, v, amplitude):
+    grid_width = 10
+    grid_height = 10
+    width_dx = POINTS // grid_width
+    height_dx = POINTS // grid_height
+
+    u_recovering_threshold = -0.4
+    v_recovering_threshold = 0.2
+    g_threshold = 0.55
+
+    circle_radius = (width_dx // 2.5) * DX
+
+    def apply_grid_shock(u, v, i, j):
+      start_x = i * width_dx
+      start_y = j * height_dx
+
+      for x in range(start_x, start_x + width_dx):
+          for y in range(start_y, start_y + height_dx):
+              if (u[x, y] < u_recovering_threshold) and (abs(v[x, y] - v_recovering_threshold) < g_threshold):
+                 # stimulus_rectangle(u, start_x, start_x + width_dx, start_y, start_y + height_dx, amplitude)
+                  x_center = GRID_X[start_x + (width_dx // 2)]
+                  y_center = GRID_Y[start_y + (height_dx // 2)]
+                  stimulus_circle(u, y_center, x_center, circle_radius, amplitude)
+                  return 1
+      return 0
+
+    num_impulses = 0
+    for i in range(grid_width):
+        for j in range(grid_height):
+            num_impulses += apply_grid_shock(u, v, i, j)
+
+    # Calculate the area of an example circle
+    circle_area = np.sum((X - 5) ** 2 + (Y - 5) ** 2 <= circle_radius ** 2)
+    total_stimulus_area = num_impulses * circle_area
+    grid_area = (grid_width * width_dx) * (grid_height * height_dx)
+    print(f"Coverage: {(total_stimulus_area / grid_area) * 100:.2f}%")
+
+def run_simulation(initial_impulse, stimulus_schedule, scar_schedule):
+    u, v = initialise_fields(initial_impulse)
+
+    snapshots = []
+
+    for i in range(1, LOOPS + 1):
+        # Apply scheduled stimuli at calculated intervals
+        for stimulus in stimulus_schedule:
+            if i in stimulus["interval"]:
+                apply_stimulus(u, stimulus["shape_function"], **stimulus["params"])
+
+        # Apply scar tissue every render so that they maintain
+        for scar_function in scar_schedule:
+          scar_function(u, v)
+
+        # Update fields
+        u, v = update_fields(u, v)
+
+        if i == 7000:
+          virtual_electrode(u, v, 2.75)
+
+        # Save snapshots at specified intervals
+        if i % OFTEN == 0 and i > transient_delay:
+            snapshots.append(u.copy())
+
+    return snapshots
+
+
+def create_animation(snapshots):
+    fig, ax = plt.subplots(figsize=(8, 8))
+    cax = ax.imshow(
+        snapshots[0],
+        extent=[GRID_X.min(), GRID_X.max(), GRID_Y.min(), GRID_Y.max()],
+        vmin=-2,
+        vmax=2,
+        cmap='coolwarm',
+        animated=True
+    )
+    cbar = fig.colorbar(cax, label='u')
+    cbar.ax.set_ylabel('u', fontsize=34)
+    cbar.ax.tick_params(labelsize=28)
+    #title = ax.set_title('Spiral Wave Evolution at t=0.00')
+    ax.set_xlabel('x', fontsize = 34)
+    ax.set_ylabel('y', fontsize = 34)
+    plt.xticks(fontsize=28)
+    plt.yticks(fontsize=28)
+
+    def animate_frame(i):
+        cax.set_array(snapshots[i])
+        current_time = (i * OFTEN * DT)
+      #  title.set_text(f'Spiral Wave Evolution at t={current_time:.2f}')
+        return [cax,]
+
+    animation = matplotlib.animation.FuncAnimation(
+        fig,
+        animate_frame,
+        frames=len(snapshots),
+        interval=100,
+        blit=True,
+        repeat=True
+    )
+    plt.close(fig)
+    return animation
+
+if __name__ == "__main__":
+    # Calculate stimulus intervals for every 857 milliseconds
+    # 857 ms = 19.04 dimensionless time units = 1904 simulation steps
+    stimulus_interval = 1904
+
+    # Generate stimulus events starting from the beginning of the simulation
+    # and continuing at regular intervals
+    start_step = 0  # Start from the beginning of the simulation
+    max_steps = LOOPS
+    stimulus_steps = list(range(start_step, max_steps, stimulus_interval))
+
+    # Define stimuli with the new regular intervals
+    stimulus_schedule = [{
+        "interval": stimulus_steps,
+        "shape_function": stimulus_rectangle,
+        "params": {"x_start": 5, "x_end": 50, "y_start": 5, "y_end": 10, "amplitude": 1.5}
+    }]
+
+    # Define scars
+    scar_schedule = []
+
+    # Initial impulse True / False and then our stimulus schedule
+    snapshots = run_simulation(True, stimulus_schedule, scar_schedule)
+    animation = create_animation(snapshots)
+
+    # Save the animation using FFmpeg writer
+    Writer = matplotlib.animation.writers['ffmpeg']
+    writer = Writer(fps=10, bitrate=1800)
+    animation.save("virtual_electrode.mp4", writer=writer)
+
+    display(HTML(animation.to_jshtml()))
+
+"""
+Rectangle Impulse Template:
+
+{
+    "interval": [1000, 2000, 3000, 4000],
+    "shape_function": stimulus_rectangle,
+    "params": {"x_start": 5, "x_end": 50, "y_start": 5, "y_end": 10, "amplitude": 10}
+}
+"""
+
+"""
+Circle Scar Template:
+
+lambda u, v: scar_circle(u, v, x_center=25, y_center=25, radius=7),
+
+"""
