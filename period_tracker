@@ -1,0 +1,98 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
+# Model parameters
+a = 0.5
+b = 0.05
+epsilon = 0.3
+beta = 0.7
+gam = 0.5
+ustar = -1.032789870
+vstar = -0.6655797400
+
+# Simulation parameters
+loops = 9000
+dt = 0.01
+t = 0.0
+often = 100
+count = 0
+
+# Grid parameters (2D)
+points = 201
+L = 50
+x = np.linspace(0, L, points)
+y = np.linspace(0, L, points)
+X, Y = np.meshgrid(x, y)
+dx = L / (points -1)
+
+# Initial conditions (2D)
+u = ustar + 10 * np.exp((-(X - 10) ** 2) / 100)  # Gaussian initial condition for u
+v = vstar + 10 * np.exp((-(Y - 10) ** 2) / 100)  # Gaussian initial condition for v
+
+# Measurement point for period analysis (center of the grid)
+measurement_point = (points // 2, points // 2)
+u_values_at_point = []
+
+# Skip initial transient by specifying a delay
+transient_delay = 1350  # Number of iterations to skip before starting measurement
+
+# Time evolution
+for i in range(loops):
+    # Calculate second derivatives in x and y directions
+    u2x = (u[2:, 1:-1] - 2 * u[1:-1, 1:-1] + u[:-2, 1:-1]) / dx ** 2
+    u2y = (u[1:-1, 2:] - 2 * u[1:-1, 1:-1] + u[1:-1, :-2]) / dx ** 2
+    u2xy = u2x + u2y
+
+    # Time derivatives
+    ut = (u[1:-1, 1:-1] - u[1:-1, 1:-1] ** 3 / 3 - v[1:-1, 1:-1]) / epsilon
+    vt = epsilon * (u[1:-1, 1:-1] + beta - gam * v[1:-1, 1:-1])
+
+    # Update u and v in the interior points
+    u[1:-1, 1:-1] += dt * (ut + u2xy)
+    v[1:-1, 1:-1] += dt * (vt)
+
+    # Enforce boundary conditions
+    u[0, :] = ustar
+    u[-1, :] = ustar
+    u[:, 0] = ustar
+    u[:, -1] = ustar
+
+    v[0, :] = vstar
+    v[-1, :] = vstar
+    v[:, 0] = vstar
+    v[:, -1] = vstar
+
+    # Record the u value at the measurement point after the transient period
+    if i > transient_delay:
+        u_values_at_point.append(u[measurement_point[0], measurement_point[1]])
+
+# Convert the recorded values to a numpy array
+u_values_at_point = np.array(u_values_at_point)
+
+# Manually find peaks in the recorded u values at the measurement point
+peaks = []
+for j in range(1, len(u_values_at_point) - 1):
+    if u_values_at_point[j - 1] < u_values_at_point[j] > u_values_at_point[j + 1]:
+        peaks.append(j)
+
+# Calculate the times of the peaks and the period between them
+peak_times = np.array(peaks) * dt  # Convert peak indices to time
+periods = np.diff(peak_times)  # Calculate the difference between successive peaks
+average_period = np.mean(periods)
+print(periods)
+
+# Print the average period
+print("Average period of oscillation at measurement point (after transient):", average_period)
+
+# Plot the time series with detected peaks for verification
+time_series = np.arange(len(u_values_at_point)) * dt
+plt.figure(figsize=(8, 4))
+plt.plot(time_series, u_values_at_point, label='u', color='b')
+plt.plot(peak_times, u_values_at_point[peaks], 'rX', label='Peaks', markersize=10, color='tomato')
+plt.xlabel("Time", fontsize=20)
+plt.ylabel("u (at measured point)", fontsize=20)
+plt.grid(True)
+plt.xticks(fontsize=18)
+plt.yticks(fontsize=18)
+#plt.title("Oscillations of u at Measurement Point (After Transient)")
+plt.show()
