@@ -1,0 +1,56 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
+# Parameters a and b for the initial perturbation
+a = 0.5
+b = 0.05
+
+# FHN model parameters just like all the previous code files
+epsilon = 0.3
+beta = 0.7
+gam = 0.5
+ustar = -1.032789870
+vstar = -0.6655797400
+
+# Discretising the grid, including the number of points
+# Here things like grid resolution, evenly spaced grid points and num are controlled
+# Time step sizes and number of iterations for the simulation are also defined
+points = 201
+L = 100
+dx = L / (points - 1)
+x = np.linspace(-50, 50, points)
+dt = 0.01
+loops = 2000
+
+#Initialising the u and v fields with the gaussian perturbations being centred
+u = ustar + a * np.exp(-b * x**2)
+v = np.ones(points) * vstar
+t_0 = u.copy()
+
+# This is the simulation loop that uses the Euler method and the finite differences approximation for the 2D grid
+for i in range(loops):
+    d2u_dx2 = np.zeros(points)
+    d2u_dx2[1:-1] = (u[2:] - 2*u[1:-1] + u[:-2]) / dx**2
+
+    du_dt = (u - u**3 / 3.0 - v) / epsilon
+    dv_dt = epsilon * (u + beta - gam * v)
+
+    u[1:-1] = u[1:-1] + dt * (du_dt[1:-1] + d2u_dx2[1:-1])
+    v[1:-1] = v[1:-1] + dt * dv_dt[1:-1]
+
+    # We define here the boundary conditions and force fixed values at the boundaries to prevent changes to the system
+    u[0], u[-1] = ustar, ustar
+    v[0], v[-1] = vstar, vstar
+
+t_final = u.copy()
+
+plt.figure(figsize=(10, 5))
+plt.grid(True)
+plt.plot(x, t_0, label='t=0', color='tomato')
+plt.plot(x, t_final, label='t=20', color='blue')
+plt.xlabel("x", fontsize=20)
+plt.ylabel("u", fontsize=20)
+plt.xticks(fontsize=16)
+plt.yticks(fontsize=16)
+plt.legend(fontsize=14, loc='upper right')
+plt.show()
