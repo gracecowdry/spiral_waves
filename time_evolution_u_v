@@ -1,0 +1,69 @@
+# How variables evolve over time in FitzHughNagumo
+import numpy as np
+import matplotlib.pyplot as plt
+
+# Parameters
+# Parameters controlling the model
+epsilon=0.3
+beta=0.7
+gam=0.5
+ustar=-1.032789870
+vstar=-0.6655797400
+
+# Parameters controlling the simulation
+# If we are getting poor numerical stability doing smalller updates using a smaller dt e.g
+# dt = 0.005 will work well to reduce this poor stability
+loops = 2500
+dt = 0.01
+t = 0.0
+
+# Base / Initial conditions
+u=ustar + 0.29
+v=vstar
+
+ulist=[u]
+vlist=[v]
+tlist=[t]
+
+# Simulation loop, that iterates the number of timesteps we choosen
+for loop in range(0, loops):
+    ut=(u-u**3/3.0-v)/epsilon
+    vt=epsilon*(u+beta-gam*v)
+
+    # This is the Euler's Method part
+    t=t+dt
+    u=u+ut*dt
+    v=v+vt*dt
+
+    # Once again we are keeping track of the variables
+    # Adding the values at every single timestep (u, v and t)
+    tlist.append(t)
+    ulist.append(u)
+    vlist.append(v)
+
+# Nullclines
+uu=np.arange(-2.5,2.0,0.01)
+v1=uu-uu**3/3.0
+v2=(uu+beta)/gam
+
+# We now get the max and minimum values of the ulist
+u_max = max(ulist)
+u_min = min(ulist)
+print(f"Maximum value of u: {u_max:.6f}")
+print(f"Minimum value of u: {u_min:.6f}")
+
+# plotting
+fig = plt.figure()
+
+# Extra plotting values and customisation making the graph below look nicer for the report
+ax2 = fig.add_subplot(212)
+ax2.set_xlabel("t", fontsize=16)
+ax2.set_title(" ")
+ax2.plot(tlist,ulist,color="tomato",label='u')
+ax2.plot(tlist,vlist,color="b",label='v')
+ax2.set_xlim([0.0,dt*loops])
+ax2.legend(fontsize=16)
+ax2.tick_params(axis='both', which='major', labelsize=12)
+fig.set_tight_layout(True)
+fig.savefig('ode.pdf',bbox_inches='tight')
+plt.show()
